@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background with gradient -->
+  <defs>
+    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1E88E5"/>
+      <stop offset="100%" style="stop-color:#1565C0"/>
+    </linearGradient>
+    <!-- Islamic pattern -->
+    <pattern id="islamicPattern" x="0" y="0" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M20 0L40 20L20 40L0 20Z" fill="rgba(255,255,255,0.1)"/>
+    </pattern>
+  </defs>
+  
+  <!-- Background circle -->
+  <circle cx="512" cy="512" r="512" fill="url(#bgGradient)"/>
+  <circle cx="512" cy="512" r="512" fill="url(#islamicPattern)"/>
+  
+  <!-- Crescent and star -->
+  <path d="M512 200C650 200 750 300 750 512C750 724 650 824 512 824C374 824 274 724 274 512C274 300 374 200 512 200Z" fill="white" opacity="0.9"/>
+  <circle cx="512" cy="512" r="280" fill="url(#bgGradient)"/>
+  
+  <!-- Star -->
+  <path d="M512 350L544 446L646 446L564 506L596 602L512 542L428 602L460 506L378 446L480 446Z" fill="white"/>
+  
+  <!-- Checkmark -->
+  <path d="M460 532L512 584L564 480" stroke="white" stroke-width="30" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  
+  <!-- Arabic text "عاداتي" -->
+  <text x="512" y="700" font-family="Arial" font-size="120" fill="white" text-anchor="middle" dominant-baseline="middle" style="font-weight: bold;">عاداتي</text>
+</svg> 

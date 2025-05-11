@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- تدرج لوني للخلفية -->
+    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#2E5C88;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#1A365D;stop-opacity:1" />
+    </linearGradient>
+    
+    <!-- نمط إسلامي للإطار -->
+    <pattern id="islamicPattern" x="0" y="0" width="60" height="60" patternUnits="userSpaceOnUse">
+      <path d="M30 0L60 30L30 60L0 30Z" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="2"/>
+      <circle cx="30" cy="30" r="5" fill="rgba(255,255,255,0.1)"/>
+    </pattern>
+  </defs>
+
+  <!-- الخلفية الرئيسية -->
+  <circle cx="512" cy="512" r="460" fill="url(#bgGradient)"/>
+  
+  <!-- الإطار الزخرفي -->
+  <circle cx="512" cy="512" r="440" fill="none" stroke="url(#islamicPattern)" stroke-width="40"/>
+  
+  <!-- الهلال -->
+  <path d="M512 200
+           A250 250 0 1 1 512 800
+           A200 200 0 1 0 512 200"
+        fill="#FFFFFF"
+        opacity="0.95"/>
+
+  <!-- النجمة -->
+  <g transform="translate(512,500) scale(0.4)">
+    <path d="M0,-300 L70,-70 L300,0 L70,70 L0,300 L-70,70 L-300,0 L-70,-70 Z" 
+          fill="#FFFFFF" 
+          opacity="0.9"/>
+  </g>
+
+  <!-- علامة صح -->
+  <path d="M412 612L512 712L712 512" 
+        stroke="#FFFFFF" 
+        stroke-width="30" 
+        stroke-linecap="round" 
+        stroke-linejoin="round"
+        fill="none"/>
+
+  <!-- النص -->
+  <text x="512" y="850" 
+        font-family="Noto Sans Arabic, Arial" 
+        font-size="120" 
+        fill="#FFFFFF" 
+        text-anchor="middle" 
+        dominant-baseline="middle"
+        style="font-weight:bold;">عاداتي</text>
+</svg> 
