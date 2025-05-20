@@ -1,8 +1,12 @@
 import React from 'react';
-import { View, Text, StyleSheet, Image, SafeAreaView, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, Image, SafeAreaView, ScrollView, Linking, TouchableOpacity } from 'react-native';
 import { COLORS, SPACING } from '../theme';
 
 const AboutScreen = () => {
+  const openLink = (url: string) => {
+    Linking.openURL(url);
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContainer}>
@@ -11,7 +15,7 @@ const AboutScreen = () => {
         </View>
         
         <Text style={styles.title}>متتبع العادات</Text>
-        <Text style={styles.subtitle}>نسخة 1.0.0</Text>
+        <Text style={styles.subtitle}>نسخة 1.6.0</Text>
         
         <View style={styles.infoCard}>
           <Text style={styles.sectionTitle}>عن التطبيق</Text>
@@ -24,10 +28,16 @@ const AboutScreen = () => {
         
         <View style={styles.infoCard}>
           <Text style={styles.sectionTitle}>المطورون</Text>
-          <Text style={styles.description}>تم تطوير هذا التطبيق بواسطة فريق مبدع.</Text>
+          <Text style={styles.description}>
+            تم تطوير هذا التطبيق بواسطة{' '}
+            <Text style={styles.link} onPress={() => openLink('https://hashimi.vercel.app/')}>
+              هاشمي
+            </Text>
+            .
+          </Text>
         </View>
         
-        <Text style={styles.footer}>جميع الحقوق محفوظة © 2023</Text>
+        <Text style={styles.footer}>جميع الحقوق محفوظة © 2025</Text>
       </ScrollView>
     </SafeAreaView>
   );
@@ -88,6 +98,10 @@ const styles = StyleSheet.create({
     color: COLORS.textDark,
     lineHeight: 24,
     textAlign: 'center',
+  },
+  link: {
+    color: COLORS.primary,
+    textDecorationLine: 'underline',
   },
   footer: {
     marginTop: SPACING.xl,

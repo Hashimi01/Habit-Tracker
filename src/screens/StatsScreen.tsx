@@ -55,11 +55,29 @@ const StatsScreen = () => {
   const slideAnim = useRef(new Animated.Value(20)).current;
   const chartFadeAnim = useRef(new Animated.Value(0)).current;
 
-  // Update states to use proper type
-  const [selectedCommitmentPoint, setSelectedCommitmentPoint] = useState<TooltipPosition | null>(null);
-  const [selectedActivityPoint, setSelectedActivityPoint] = useState<TooltipPosition | null>(null);
+  // تعديل نمط عرض التلميحات
+  const [commitmentTooltip, setCommitmentTooltip] = useState<{
+    visible: boolean;
+    label?: string;
+    value?: number;
+    position?: number;
+  }>({ visible: false });
+  
+  const [activityTooltip, setActivityTooltip] = useState<{
+    visible: boolean;
+    label?: string;
+    value?: number;
+    date?: string;
+    position?: number;
+  }>({ visible: false });
+
+  // أضف هذه المراجع
   const commitmentChartRef = useRef<View>(null);
   const activityChartRef = useRef<View>(null);
+  
+  // إضافة متغيرات لتتبع حالة الزر النشط
+  const [activeTooltip, setActiveTooltip] = useState<string | null>(null); // 'commitment' أو 'activity' أو null
+  const tooltipTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     // Run entrance animations when view changes
@@ -191,47 +209,88 @@ const StatsScreen = () => {
       ? commitHabits.find(h => h.id === selectedHabitId)
       : commitHabits[0];
       
-    if (commitHabitToProcess && commitHabitToProcess.logs.length > 0) {
-      // Filter logs by time period
-      const filteredLogs = commitHabitToProcess.logs.filter(
-        log => new Date(log.date) > cutoffDate
-      );
+    if (commitHabitToProcess) {
+      // إنشاء مجموعة من التواريخ المسجلة بالفعل للتحقق لاحقًا
+      const recordedDates = new Map<string, boolean>();
       
-      // Convert to chart format with proper dates
-      processedCommitData = filteredLogs.map((log, index) => ({
-        value: log.committed ? 1 : 0,
-        label: new Date(log.date).toLocaleDateString().substring(0, 5),
-        dataPointLabelComponent: () => (
-          <Text style={{
-            color: log.committed ? COLORS.success : COLORS.error, 
-            fontSize: 14, 
-            fontWeight: 'bold',
-            backgroundColor: log.committed ? 'rgba(76, 175, 80, 0.1)' : 'rgba(244, 67, 54, 0.1)',
-            width: 20,
-            height: 20,
-            textAlign: 'center',
-            borderRadius: 10,
-            overflow: 'hidden',
-            lineHeight: 20
-          }}>
-            {log.committed ? '✓' : '✗'}
-          </Text>
-        ),
-        dataPointLabelShiftY: -15,
-        dataPointLabelShiftX: 0,
-        // Styling
-        customDataPoint: () => (
-          <View
-            style={{
-              width: 16,
-              height: 16,
-              backgroundColor: log.committed ? COLORS.success : COLORS.error,
-              borderRadius: 8
-            }}
-          />
-        ),
-        dataPointColor: log.committed ? COLORS.success : COLORS.error,
-      }));
+      // إذا كانت هناك سجلات نضيفها للمجموعة
+      if (commitHabitToProcess.logs.length > 0) {
+        // Filter logs by time period
+        const filteredLogs = commitHabitToProcess.logs.filter(
+          log => new Date(log.date) > cutoffDate
+        );
+        
+        filteredLogs.forEach(log => {
+          const dateStr = new Date(log.date).toLocaleDateString();
+          recordedDates.set(dateStr, log.committed);
+        });
+      }
+      
+      // إنشاء فترة التواريخ المطلوبة بناء على الفترة المحددة
+      const dateRange: Date[] = [];
+      const now = new Date();
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      
+      // احتساب عدد الأيام بناء على الفترة المحددة
+      let daysToInclude = 7; // الافتراضي أسبوع
+      if (period === 'month') {
+        daysToInclude = 30;
+      } else if (period === 'all') {
+        // بالنسبة للفترة "الكل"، نستخدم تاريخ القطع فقط
+        const timeDiff = today.getTime() - cutoffDate.getTime();
+        daysToInclude = Math.ceil(timeDiff / (1000 * 3600 * 24)) + 1;
+      }
+      
+      // إنشاء مصفوفة التواريخ
+      for (let i = daysToInclude - 1; i >= 0; i--) {
+        const date = new Date(today);
+        date.setDate(date.getDate() - i);
+        dateRange.push(date);
+      }
+      
+      // تحويل إلى تنسيق الرسم البياني مع إدراج جميع الأيام
+      processedCommitData = dateRange.map((date) => {
+        const dateStr = date.toLocaleDateString();
+        const isRecorded = recordedDates.has(dateStr);
+        const isCommitted = isRecorded ? recordedDates.get(dateStr) : false; // إذا لم يسجل، يعتبر غير ملتزم
+        
+        return {
+          value: isCommitted ? 1 : 0,
+          label: dateStr.substring(0, 5),
+          committed: isCommitted,
+          date: dateStr,
+          dataPointLabelComponent: () => (
+            <Text style={{
+              color: isCommitted ? COLORS.success : COLORS.error, 
+              fontSize: 14, 
+              fontWeight: 'bold',
+              backgroundColor: isCommitted ? 'rgba(76, 175, 80, 0.1)' : 'rgba(244, 67, 54, 0.1)',
+              width: 20,
+              height: 20,
+              textAlign: 'center',
+              borderRadius: 10,
+              overflow: 'hidden',
+              lineHeight: 20
+            }}>
+              {isCommitted ? '✓' : '✗'}
+            </Text>
+          ),
+          dataPointLabelShiftY: -15,
+          dataPointLabelShiftX: 0,
+          // Styling
+          customDataPoint: () => (
+            <View
+              style={{
+                width: 16,
+                height: 16,
+                backgroundColor: isCommitted ? COLORS.success : COLORS.error,
+                borderRadius: 8
+              }}
+            />
+          ),
+          dataPointColor: isCommitted ? COLORS.success : COLORS.error,
+        };
+      });
     }
     setCommitmentData(processedCommitData);
 
@@ -269,7 +328,7 @@ const StatsScreen = () => {
       
       setActivityData(activityPoints);
     }
-    
+
     setLoading(false);
   }, [period, viewMode, selectedHabitId]);
 
@@ -438,48 +497,222 @@ const StatsScreen = () => {
     return translations[key] || key;
   };
 
-  // In the chart components, add close buttons for tooltips
-  const renderCommitmentTooltip = () => {
-    if (selectedCommitmentPoint === null) return null;
+  // أضف وظيفة لإدارة عرض التلميحات
+  const showTooltip = useCallback((type: 'commitment' | 'activity', index: number) => {
+    // إذا كان هناك مؤقت سابق، قم بإلغائه
+    if (tooltipTimeoutRef.current) {
+      clearTimeout(tooltipTimeoutRef.current);
+      tooltipTimeoutRef.current = null;
+    }
     
-    return (
-      <View style={[styles.tooltip, { top: selectedCommitmentPoint.y - 80, left: selectedCommitmentPoint.x - 75 }]}>
-        <View style={styles.closeButtonContainer}>
-          <TouchableOpacity 
-            onPress={() => setSelectedCommitmentPoint(null)}
-            style={styles.closeButton}
-          >
-            <Text style={styles.closeButtonText}>×</Text>
-          </TouchableOpacity>
-        </View>
-        <Text style={styles.tooltipTitle}>{formatDate(commitmentData[selectedCommitmentPoint.index].date)}</Text>
-        <Text style={styles.tooltipText}>
-          {t('committed')}: {commitmentData[selectedCommitmentPoint.index].committed ? t('yes') : t('no')}
-        </Text>
-      </View>
-    );
-  };
+    // تحديث الزر النشط
+    setActiveTooltip(type);
+    
+    // إذا كان النوع هو 'commitment'، قم بتحديث تلميح الالتزام
+    if (type === 'commitment') {
+      const item = commitmentData[index];
+      if (item) {
+        setCommitmentTooltip({
+          visible: true,
+          label: item.label,
+          value: item.value,
+          position: index
+        });
+        
+        // إعادة تعيين تلميح النشاط
+        setActivityTooltip(prev => ({...prev, visible: false}));
+      }
+    } 
+    // إذا كان النوع هو 'activity'، قم بتحديث تلميح النشاط
+    else if (type === 'activity') {
+      const item = activityData[index];
+      if (item) {
+        setActivityTooltip({
+          visible: true,
+          label: item.label,
+          value: item.value,
+          date: item.date,
+          position: index
+        });
+        
+        // إعادة تعيين تلميح الالتزام
+        setCommitmentTooltip(prev => ({...prev, visible: false}));
+      }
+    }
+    
+    // تعيين مؤقت لإخفاء التلميح بعد 5 ثوان
+    tooltipTimeoutRef.current = setTimeout(() => {
+      if (type === 'commitment') {
+        setCommitmentTooltip(prev => ({...prev, visible: false}));
+      } else {
+        setActivityTooltip(prev => ({...prev, visible: false}));
+      }
+      setActiveTooltip(null);
+      tooltipTimeoutRef.current = null;
+    }, 5000);
+  }, [commitmentData, activityData]);
+  
+  // أضف وظيفة لإخفاء جميع التلميحات
+  const hideAllTooltips = useCallback(() => {
+    if (tooltipTimeoutRef.current) {
+      clearTimeout(tooltipTimeoutRef.current);
+      tooltipTimeoutRef.current = null;
+    }
+    setCommitmentTooltip(prev => ({...prev, visible: false}));
+    setActivityTooltip(prev => ({...prev, visible: false}));
+    setActiveTooltip(null);
+  }, []);
+  
+  // تأكد من تنظيف المؤقت عند إلغاء تحميل المكون
+  useEffect(() => {
+    return () => {
+      if (tooltipTimeoutRef.current) {
+        clearTimeout(tooltipTimeoutRef.current);
+      }
+    };
+  }, []);
 
-  const renderActivityTooltip = () => {
-    if (selectedActivityPoint === null) return null;
-    
-    return (
-      <View style={[styles.tooltip, { top: selectedActivityPoint.y - 80, left: selectedActivityPoint.x - 75 }]}>
-        <View style={styles.closeButtonContainer}>
-          <TouchableOpacity 
-            onPress={() => setSelectedActivityPoint(null)}
-            style={styles.closeButton}
-          >
-            <Text style={styles.closeButtonText}>×</Text>
-          </TouchableOpacity>
-        </View>
-        <Text style={styles.tooltipTitle}>{formatDate(activityData[selectedActivityPoint.index].date)}</Text>
-        <Text style={styles.tooltipText}>
-          {t('completedTasks')}: {activityData[selectedActivityPoint.index].completedTasks}
-        </Text>
-      </View>
-    );
-  };
+  // تحديث استدعاءات showCommitmentTooltip وshowActivityTooltip
+  const showCommitmentTooltip = useCallback((index: number) => {
+    showTooltip('commitment', index);
+  }, [showTooltip]);
+
+  const showActivityTooltip = useCallback((index: number) => {
+    showTooltip('activity', index);
+  }, [showTooltip]);
+
+  const renderCommitmentChart = () => (
+    <LineChart
+      areaChart
+      curved={false}
+      data={commitmentData}
+      height={180}
+      spacing={40}
+      thickness={1.5}
+      color={COLORS.success}
+      dataPointsHeight={6}
+      dataPointsWidth={6}
+      dataPointsColor={COLORS.success}
+      startFillColor="rgba(76, 175, 80, 0.15)"
+      endFillColor="rgba(76, 175, 80, 0.02)"
+      startOpacity={0.7}
+      endOpacity={0.1}
+      noOfSections={5}
+      maxValue={1}
+      yAxisColor={COLORS.border}
+      xAxisColor={COLORS.border}
+      rulesColor="rgba(0,0,0,0.05)"
+      rulesType="solid"
+      width={Math.max(width - 24, 600)}
+      yAxisLabelTexts={['0', '0.2', '0.4', '0.6', '0.8', '1.0']}
+      showYAxisIndices
+      hideRules={false}
+      yAxisLabelWidth={35}
+      adjustToWidth={true}
+      xAxisLabelTextStyle={{
+        color: COLORS.textDark,
+        fontSize: 10,
+        fontWeight: '500',
+      }}
+      yAxisTextStyle={{
+        color: COLORS.textDark,
+        fontSize: 10,
+        fontWeight: '500',
+      }}
+      onPress={(item: any, index: number) => showCommitmentTooltip(index)}
+      pointerConfig={{
+        pointerStripHeight: 160,
+        pointerStripColor: 'rgba(0,0,0,0.1)',
+        pointerStripWidth: 1,
+        pointerColor: COLORS.primary,
+        radius: 4,
+        pointerLabelWidth: 100,
+        pointerLabelHeight: 80,
+        activatePointersOnLongPress: false,
+        autoAdjustPointerLabelPosition: true,
+        pointerLabelComponent: (items: any) => {
+          const item = items[0];
+          return (
+            <View style={styles.tooltipContainer}>
+              <Text style={styles.tooltipHeaderText}>{item.label}</Text>
+              <Text style={[
+                styles.tooltipValueText,
+                { color: item.value === 1 ? COLORS.success : COLORS.error }
+              ]}>
+                {item.value === 1 ? '✓ ملتزم' : '✕ غير ملتزم'}
+              </Text>
+            </View>
+          );
+        },
+      }}
+    />
+  );
+
+  const renderActivityChart = () => (
+    <LineChart
+      areaChart
+      curved={false}
+      data={activityData.map(point => ({
+        value: point.value,
+        label: point.label,
+      }))}
+      height={180}
+      spacing={40}
+      thickness={1.5}
+      color="#FFC107"
+      startFillColor="rgba(255, 193, 7, 0.15)"
+      endFillColor="rgba(255, 193, 7, 0.02)"
+      startOpacity={0.7}
+      endOpacity={0.1}
+      noOfSections={4}
+      maxValue={Math.ceil(Math.max(...activityData.map(d => d.value)))}
+      yAxisColor={COLORS.border}
+      xAxisColor={COLORS.border}
+      rulesColor="rgba(0,0,0,0.05)"
+      rulesType="solid"
+      width={Math.max(width - 24, 600)}
+      showYAxisIndices
+      yAxisTextStyle={{
+        color: COLORS.textDark,
+        fontSize: 10,
+        fontWeight: '500',
+      }}
+      xAxisLabelTextStyle={{
+        color: COLORS.textDark,
+        fontSize: 10,
+        fontWeight: '500',
+      }}
+      dataPointsHeight={6}
+      dataPointsWidth={6}
+      dataPointsColor="#FFC107"
+      hideRules={false}
+      adjustToWidth={true}
+      onPress={(item: any, index: number) => showActivityTooltip(index)}
+      pointerConfig={{
+        pointerStripHeight: 160,
+        pointerStripColor: 'rgba(0,0,0,0.1)',
+        pointerStripWidth: 1,
+        pointerColor: "#FFC107",
+        radius: 4,
+        pointerLabelWidth: 100,
+        pointerLabelHeight: 80,
+        activatePointersOnLongPress: false,
+        autoAdjustPointerLabelPosition: true,
+        pointerLabelComponent: (items: any) => {
+          const item = items[0];
+          const date = activityData.find(point => point.label === item.label)?.date || '';
+          return (
+            <View style={styles.tooltipContainer}>
+              <Text style={styles.tooltipHeaderText}>{date}</Text>
+              <Text style={[styles.tooltipValueText, { color: '#FFC107' }]}>
+                {item.value} إنجاز
+              </Text>
+            </View>
+          );
+        },
+      }}
+    />
+  );
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -492,13 +725,13 @@ const StatsScreen = () => {
         <Text style={styles.title}>الإحصائيات والتحليلات</Text>
 
         {/* المربعات المعلوماتية المستمرة */}
-        {selectedCommitmentPoint !== null && (
+        {commitmentTooltip.visible && commitmentTooltip.position !== undefined && (
           <View style={[
             styles.fixedTooltipAlt, 
             { 
-              backgroundColor: commitmentData[selectedCommitmentPoint.index]?.value === 1 ? 
+              backgroundColor: commitmentData[commitmentTooltip.position]?.value === 1 ? 
                 'rgba(76, 175, 80, 0.12)' : 'rgba(244, 67, 54, 0.12)',
-              borderColor: commitmentData[selectedCommitmentPoint.index]?.value === 1 ? 
+              borderColor: commitmentData[commitmentTooltip.position]?.value === 1 ? 
                 'rgba(76, 175, 80, 0.5)' : 'rgba(244, 67, 54, 0.5)'
             }
           ]}>
@@ -507,11 +740,11 @@ const StatsScreen = () => {
               <Text style={[
                 styles.tooltipTitleAlt, 
                 { 
-                  color: commitmentData[selectedCommitmentPoint.index]?.value === 1 ? 
+                  color: commitmentData[commitmentTooltip.position]?.value === 1 ? 
                     COLORS.success : COLORS.error 
                 }
               ]}>
-                {commitmentData[selectedCommitmentPoint.index]?.value === 1 ? 
+                {commitmentData[commitmentTooltip.position]?.value === 1 ? 
                   '✓ تفاصيل الالتزام' : '⊗ تفاصيل الالتزام'}
               </Text>
             </View>
@@ -521,7 +754,7 @@ const StatsScreen = () => {
                 <Text style={styles.tooltipIcon}>📅</Text>
               </View>
               <Text style={styles.tooltipLabel}>اليوم:</Text>
-              <Text style={styles.tooltipValue}>{commitmentData[selectedCommitmentPoint.index]?.label || ""}</Text>
+              <Text style={styles.tooltipValue}>{commitmentData[commitmentTooltip.position]?.label || ""}</Text>
             </View>
 
             <View style={styles.tooltipRow}>
@@ -532,24 +765,24 @@ const StatsScreen = () => {
               <Text style={[
                 styles.tooltipStatusValue, 
                 { 
-                  color: commitmentData[selectedCommitmentPoint.index]?.value === 1 ? 
+                  color: commitmentData[commitmentTooltip.position]?.value === 1 ? 
                     COLORS.success : COLORS.error,
-                  backgroundColor: commitmentData[selectedCommitmentPoint.index]?.value === 1 ?
+                  backgroundColor: commitmentData[commitmentTooltip.position]?.value === 1 ?
                     'rgba(76, 175, 80, 0.1)' : 'rgba(244, 67, 54, 0.1)'
                 }
               ]}>
-                {commitmentData[selectedCommitmentPoint.index]?.value === 1 ? '✓ ملتزم' : '✕ غير ملتزم'}
+                {commitmentData[commitmentTooltip.position]?.value === 1 ? '✓ ملتزم' : '✕ غير ملتزم'}
               </Text>
             </View>
 
             {/* اعرض المزيد من المعلومات إذا كانت متوفرة */}
-            {commitmentData[selectedCommitmentPoint.index]?.notes && (
+            {commitmentData[commitmentTooltip.position]?.notes && (
               <View style={styles.tooltipRow}>
                 <View style={styles.tooltipIconContainer}>
                   <Text style={styles.tooltipIcon}>📝</Text>
                 </View>
                 <Text style={styles.tooltipLabel}>ملاحظات:</Text>
-                <Text style={styles.tooltipValue}>{commitmentData[selectedCommitmentPoint.index]?.notes}</Text>
+                <Text style={styles.tooltipValue}>{commitmentData[commitmentTooltip.position]?.notes}</Text>
               </View>
             )}
 
@@ -557,21 +790,21 @@ const StatsScreen = () => {
               style={[
                 styles.closeButtonContainerAlt,
                 {
-                  backgroundColor: commitmentData[selectedCommitmentPoint.index]?.value === 1 ? 
+                  backgroundColor: commitmentData[commitmentTooltip.position]?.value === 1 ? 
                     'rgba(76, 175, 80, 0.2)' : 'rgba(244, 67, 54, 0.2)',
                   borderWidth: 1,
-                  borderColor: commitmentData[selectedCommitmentPoint.index]?.value === 1 ? 
+                  borderColor: commitmentData[commitmentTooltip.position]?.value === 1 ? 
                     'rgba(76, 175, 80, 0.5)' : 'rgba(244, 67, 54, 0.5)'
                 }
               ]}
-              onPress={() => setSelectedCommitmentPoint(null)}
+              onPress={() => hideAllTooltips()}
             >
               <Text style={[styles.closeButtonText, {fontSize: 18}]}>×</Text>
             </TouchableOpacity>
           </View>
         )}
 
-        {selectedActivityPoint !== null && (
+        {activityTooltip.visible && activityTooltip.position !== undefined && (
           <View style={[
             styles.fixedTooltipAlt, 
             {
@@ -590,7 +823,7 @@ const StatsScreen = () => {
                 <Text style={styles.tooltipIcon}>📅</Text>
               </View>
               <Text style={styles.tooltipLabel}>التاريخ:</Text>
-              <Text style={styles.tooltipValue}>{activityData[selectedActivityPoint.index]?.date || ""}</Text>
+              <Text style={styles.tooltipValue}>{activityTooltip.date || ""}</Text>
             </View>
             
             <View style={styles.tooltipRow}>
@@ -602,7 +835,7 @@ const StatsScreen = () => {
                 color: '#FFC107',
                 backgroundColor: 'rgba(255, 193, 7, 0.1)'
               }]}>
-                {activityData[selectedActivityPoint.index]?.value || 0}
+                {activityTooltip.value || 0}
               </Text>
             </View>
             
@@ -616,13 +849,13 @@ const StatsScreen = () => {
                   style={[
                     styles.progressBar, 
                     { 
-                      width: `${Math.min(100, (activityData[selectedActivityPoint.index]?.value || 0) * 10)}%`,
+                      width: `${Math.min(100, (activityTooltip.value || 0) * 10)}%`,
                       backgroundColor: '#FFC107'
                     }
                   ]} 
                 />
                 <Text style={styles.progressText}>
-                  {Math.min(100, (activityData[selectedActivityPoint.index]?.value || 0) * 10)}%
+                  {Math.min(100, (activityTooltip.value || 0) * 10)}%
                 </Text>
               </View>
             </View>
@@ -636,7 +869,7 @@ const StatsScreen = () => {
                   borderColor: 'rgba(255, 193, 7, 0.5)'
                 }
               ]}
-              onPress={() => setSelectedActivityPoint(null)}
+              onPress={() => hideAllTooltips()}
             >
               <Text style={[styles.closeButtonText, {fontSize: 18}]}>×</Text>
             </TouchableOpacity>
@@ -718,7 +951,7 @@ const StatsScreen = () => {
                 <Text style={styles.chartTitle}>توزيع أنواع العادات</Text>
                 <View style={styles.chartIconContainer}>
                   <View style={styles.fancyIconCircle}>
-                    <Text style={styles.chartIcon}>📊</Text>
+                  <Text style={styles.chartIcon}>📊</Text>
                   </View>
                 </View>
               </View>
@@ -778,7 +1011,7 @@ const StatsScreen = () => {
                   </Text>
                   <View style={styles.chartIconContainer}>
                     <View style={[styles.fancyIconCircle, {backgroundColor: 'rgba(33, 150, 243, 0.15)'}]}>
-                      <Text style={styles.chartIcon}>📈</Text>
+                    <Text style={styles.chartIcon}>📈</Text>
                     </View>
                   </View>
                 </View>
@@ -807,13 +1040,13 @@ const StatsScreen = () => {
                         xAxisLabelTextStyle={styles.axisText}
                         noOfSections={5}
                         barBorderRadius={8}
-                        width={Math.max(width * 1.5, 600)}
-                        disablePress
+                        width={Math.max(width - 40, 600)}
+                        disablePress={false}
                         frontColor={COLORS.primary}
                         yAxisColor={COLORS.border}
                         xAxisColor={COLORS.border}
                         dashWidth={0}
-                        backgroundColor={COLORS.white}
+                        backgroundColor={'transparent'}
                         showGradient
                         showReferenceLine1
                         referenceLine1Position={0}
@@ -822,6 +1055,14 @@ const StatsScreen = () => {
                           dashWidth: 2,
                           dashGap: 3,
                         }}
+                        showFractionalValues
+                        horizontalRulesStyle={{
+                          strokeDasharray: '3,3',
+                          opacity: 0.5
+                        }}
+                        adjustToWidth={true}
+                        isAnimated={true}
+                        animationDuration={800}
                       />
                     </ScrollView>
                   </Animated.View>
@@ -854,7 +1095,7 @@ const StatsScreen = () => {
                   </Text>
                   <View style={styles.chartIconContainer}>
                     <View style={[styles.fancyIconCircle, {backgroundColor: 'rgba(76, 175, 80, 0.15)'}]}>
-                      <Text style={styles.chartIcon}>📅</Text>
+                    <Text style={styles.chartIcon}>📅</Text>
                     </View>
                   </View>
                 </View>
@@ -866,111 +1107,7 @@ const StatsScreen = () => {
                       { opacity: chartFadeAnim }
                     ]}
                   >
-                    <ScrollView 
-                      horizontal 
-                      showsHorizontalScrollIndicator={true}
-                    >
-                      <View ref={commitmentChartRef}>
-                        <LineChart
-                          areaChart
-                          curved
-                          data={commitmentData}
-                          height={180}
-                          spacing={30}
-                          thickness={4}
-                          color={COLORS.success}
-                          dataPointsHeight={12}
-                          dataPointsWidth={12}
-                          dataPointsColor={COLORS.success}
-                          startFillColor="rgba(76, 175, 80, 0.3)"
-                          endFillColor="rgba(76, 175, 80, 0.05)"
-                          startOpacity={0.9}
-                          endOpacity={0.2}
-                          noOfSections={1}
-                          maxValue={1.1}
-                          yAxisColor={COLORS.border}
-                          xAxisColor={COLORS.border}
-                          hideRules
-                          width={Math.max(width * 1.5, 600)}
-                          yAxisLabelTexts={['❌', '✓']}
-                          showYAxisIndices
-                          rulesColor={COLORS.border}
-                          yAxisLabelWidth={30}
-                          disableScroll={false}
-                          hideDataPoints={false}
-                          isAnimated
-                          animationDuration={500}
-                          focusEnabled
-                          adjustToWidth
-                          customDataPoint={(item: any, index: number) => {
-                            return (
-                              <View
-                                style={{
-                                  width: 18,
-                                  height: 18,
-                                  backgroundColor: item.value === 1 ? 'rgba(76, 175, 80, 0.2)' : 'rgba(244, 67, 54, 0.2)',
-                                  borderRadius: 9,
-                                  borderWidth: 2,
-                                  borderColor: item.value === 1 ? COLORS.success : COLORS.error,
-                                  justifyContent: 'center',
-                                  alignItems: 'center',
-                                }}
-                              >
-                                <Text style={{fontSize: 10}}>
-                                  {item.value === 1 ? '✓' : '✕'}
-                                </Text>
-                              </View>
-                            );
-                          }}
-                          onPress={(item: any, index: number) => {
-                            // استمرار عرض المعلومات حتى بعد رفع الإصبع
-                            setSelectedCommitmentPoint({
-                              x: 200,
-                              y: 200,
-                              index
-                            });
-                          }}
-                          pointerConfig={{
-                            pointerStripHeight: 160,
-                            pointerStripColor: COLORS.primary,
-                            pointerStripWidth: 2,
-                            pointerColor: COLORS.primary,
-                            radius: 6,
-                            pointerLabelWidth: 100,
-                            pointerLabelHeight: 90,
-                            activatePointersOnLongPress: false,
-                            autoAdjustPointerLabelPosition: true,
-                            shiftPointerLabelX: 0,
-                            shiftPointerLabelY: 0,
-                            stripOverPointer: true,
-                            showPointerStrip: true,
-                            pointerLabelComponent: (items: any) => {
-                              const selectedItem = items[0];
-                              
-                              return (
-                                <TouchableOpacity 
-                                  style={styles.pointerLabel}
-                                  onPress={() => {
-                                    const index = commitmentData.findIndex(item => item.label === selectedItem.label);
-                                    // استمرار ظهور المعلومات بعد النقر
-                                    setSelectedCommitmentPoint({
-                                      x: 200,
-                                      y: 200,
-                                      index
-                                    });
-                                  }}
-                                >
-                                  <Text style={styles.pointerLabelText}>{selectedItem.label}</Text>
-                                  <Text style={styles.pointerValueText}>
-                                    {selectedItem.value === 1 ? 'ملتزم ✓' : 'غير ملتزم ✗'}
-                                  </Text>
-                                </TouchableOpacity>
-                              );
-                            },
-                          }}
-                        />
-                      </View>
-                    </ScrollView>
+                    {renderCommitmentChart()}
                   </Animated.View>
                 ) : (
                   <Text style={styles.noDataText}>
@@ -1007,89 +1144,7 @@ const StatsScreen = () => {
                     { opacity: chartFadeAnim }
                   ]}
                 >
-                  <ScrollView 
-                    horizontal 
-                    showsHorizontalScrollIndicator={true}
-                  >
-                    <View ref={activityChartRef}>
-                      <LineChart
-                        areaChart
-                        curved
-                        data={activityData.map(point => ({
-                          value: point.value,
-                          dataPointText: point.value.toString(),
-                          label: point.label,
-                        }))}
-                        height={180}
-                        thickness={4}
-                        color="#FFC107"
-                        startFillColor="rgba(255, 193, 7, 0.3)"
-                        endFillColor="rgba(255, 193, 7, 0.01)"
-                        startOpacity={0.9}
-                        endOpacity={0.1}
-                        noOfSections={4}
-                        yAxisColor={COLORS.border}
-                        xAxisColor={COLORS.border}
-                        hideRules
-                        width={Math.max(width * 1.5, 600)}
-                        showYAxisIndices
-                        rulesColor="rgba(0,0,0,0.05)"
-                        yAxisTextStyle={styles.axisText}
-                        xAxisLabelTextStyle={styles.axisText}
-                        dataPointsHeight={10}
-                        dataPointsWidth={10}
-                        dataPointsColor="#FFC107"
-                        onPress={(item: any, index: number) => {
-                          // استمرار عرض المعلومات حتى بعد رفع الإصبع
-                          setSelectedActivityPoint({
-                            x: 200,
-                            y: 200,
-                            index
-                          });
-                        }}
-                        pointerConfig={{
-                          pointerStripHeight: 160,
-                          pointerStripColor: "rgba(255, 152, 0, 0.5)",
-                          pointerStripWidth: 2,
-                          pointerColor: "#FF9800",
-                          radius: 6,
-                          pointerLabelWidth: 120,
-                          pointerLabelHeight: 140,
-                          activatePointersOnLongPress: false,
-                          autoAdjustPointerLabelPosition: true,
-                          shiftPointerLabelX: 0,
-                          shiftPointerLabelY: 0,
-                          stripOverPointer: true,
-                          showPointerStrip: true,
-                          pointerLabelComponent: (items: any) => {
-                            const selectedItem = items[0];
-                            const date = activityData.find(point => point.label === selectedItem.label)?.date || '';
-                            
-                            return (
-                              <TouchableOpacity 
-                                style={styles.activityPointerLabel}
-                                onPress={() => {
-                                  const index = activityData.findIndex(item => item.label === selectedItem.label);
-                                  // استمرار ظهور المعلومات بعد النقر
-                                  setSelectedActivityPoint({
-                                    x: 200,
-                                    y: 200,
-                                    index
-                                  });
-                                }}
-                              >
-                                <Text style={styles.pointerDateText}>تاريخ: {date}</Text>
-                                <View style={styles.pointerValueContainer}>
-                                  <Text style={styles.pointerValueLabel}>القيمة:</Text>
-                                  <Text style={styles.pointerActivityValue}>{selectedItem.value}</Text>
-                                </View>
-                              </TouchableOpacity>
-                            );
-                          },
-                        }}
-                      />
-                    </View>
-                  </ScrollView>
+                  {renderActivityChart()}
                 </Animated.View>
               ) : (
                 <Text style={styles.noDataText}>
@@ -1111,17 +1166,18 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
-    paddingHorizontal: SPACING.md,
+    paddingHorizontal: SPACING.sm,
   },
   title: {
-    fontSize: 30,
+    fontSize: 24,
     fontWeight: 'bold',
-    marginVertical: SPACING.lg,
+    marginVertical: SPACING.md,
     textAlign: 'center',
     color: COLORS.primary,
   },
   filterContainer: {
-    marginBottom: SPACING.lg,
+    marginBottom: SPACING.md,
+    paddingHorizontal: 4,
   },
   periodSelector: {
     flexDirection: 'row',
@@ -1206,10 +1262,16 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   chartCard: {
+    marginBottom: 12,
+    borderRadius: 12,
+    padding: 12,
     backgroundColor: COLORS.white,
-    borderRadius: 24,
-    padding: SPACING.lg,
-    marginBottom: SPACING.lg,
+    shadowColor: COLORS.shadow,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+    marginHorizontal: 4,
   },
   cardGlow: {
     shadowColor: COLORS.shadow,
@@ -1250,14 +1312,14 @@ const styles = StyleSheet.create({
     color: COLORS.primary,
   },
   barChartContainer: {
-    marginVertical: SPACING.md,
+    marginVertical: SPACING.sm,
+    height: 220,
     alignItems: 'center',
-    paddingHorizontal: SPACING.md,
   },
   lineChartContainer: {
-    marginVertical: SPACING.md,
+    marginVertical: SPACING.sm,
+    height: 220,
     alignItems: 'center',
-    paddingHorizontal: SPACING.md,
   },
   barLabel: {
     color: COLORS.textDark,
@@ -1346,72 +1408,73 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
   pointerLabel: {
-    backgroundColor: COLORS.white,
-    borderRadius: 12,
-    padding: 10,
-    width: 100,
-    alignItems: 'center',
-    shadowColor: COLORS.shadow,
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 6,
-    borderWidth: 1,
-    borderColor: 'rgba(76, 175, 80, 0.3)',
-  },
-  pointerLabelText: {
-    fontSize: 12,
-    color: COLORS.textMedium,
-    marginBottom: 4,
-  },
-  pointerValueText: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: COLORS.textDark,
-  },
-  activityChartContainer: {
-    marginVertical: SPACING.md,
-    alignItems: 'center',
-    paddingHorizontal: SPACING.md,
-    height: 220,
-  },
-  activityPointerLabel: {
-    backgroundColor: COLORS.white,
+    backgroundColor: 'white',
     borderRadius: 12,
     padding: 12,
-    width: 120,
-    alignItems: 'center',
-    shadowColor: COLORS.shadow,
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.4,
-    shadowRadius: 10,
-    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
     borderWidth: 1,
-    borderColor: 'rgba(255, 152, 0, 0.3)',
+    borderColor: 'rgba(0,0,0,0.1)',
+  },
+  pointerLabelText: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 5,
+    textAlign: 'center',
+    color: '#333',
+  },
+  pointerValueText: {
+    fontSize: 15,
+    fontWeight: '500',
+    textAlign: 'center',
+  },
+  activityChartContainer: {
+    marginVertical: SPACING.sm,
+    height: 220,
+    alignItems: 'center',
+  },
+  activityPointerLabel: {
+    backgroundColor: 'white',
+    borderRadius: 12,
+    padding: 12,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.1)',
   },
   pointerDateText: {
     fontSize: 14,
-    fontWeight: 'bold',
-    color: COLORS.textDark,
+    fontWeight: '600',
     marginBottom: 8,
     textAlign: 'center',
+    color: '#333',
   },
   pointerValueContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    width: '100%',
-    marginVertical: 4,
   },
   pointerValueLabel: {
     fontSize: 14,
-    fontWeight: 'bold',
-    color: COLORS.primary,
+    color: '#555',
+    marginRight: 5,
   },
   pointerActivityValue: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: 'bold',
-    color: COLORS.primary,
+    color: '#FF9800',
   },
   closeButton: {
     width: 20,
@@ -1463,20 +1526,20 @@ const styles = StyleSheet.create({
   },
   fixedTooltipAlt: {
     position: 'absolute',
-    top: 100, 
-    right: 20,
-    backgroundColor: 'rgba(76, 175, 80, 0.2)',
-    borderRadius: 16,
-    padding: 16,
+    top: '40%',
+    left: '50%',
+    transform: [{ translateX: -110 }, { translateY: -80 }],
+    backgroundColor: 'rgba(255, 255, 255, 0.98)',
+    borderRadius: 12,
+    padding: 12,
     zIndex: 1000,
-    minWidth: 220,
+    width: 220,
     shadowColor: COLORS.shadow,
-    shadowOffset: { width: 0, height: 5 },
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-    elevation: 8,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 6,
     borderWidth: 1,
-    borderColor: 'rgba(76, 175, 80, 0.3)',
   },
   tooltipHeader: {
     borderBottomWidth: 1,
@@ -1599,6 +1662,30 @@ const styles = StyleSheet.create({
     height: 24,
     resizeMode: 'contain',
     marginBottom: 5,
+  },
+  tooltipContainer: {
+    backgroundColor: 'rgba(255, 255, 255, 0.98)',
+    borderRadius: 8,
+    padding: 8,
+    shadowColor: COLORS.shadow,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 3,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.1)',
+  },
+  tooltipHeaderText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: COLORS.textDark,
+    textAlign: 'center',
+    marginBottom: 4,
+  },
+  tooltipValueText: {
+    fontSize: 13,
+    fontWeight: 'bold',
+    textAlign: 'center',
   },
 });
 

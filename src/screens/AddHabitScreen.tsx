@@ -49,6 +49,7 @@ const AddHabitScreen = () => {
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [selectedTime, setSelectedTime] = useState(new Date());
   const [editingTimeIndex, setEditingTimeIndex] = useState<number | null>(null);
+  const [tempTime, setTempTime] = useState('');
 
   const handleAddHabit = async () => {
     if (!name.trim()) {
@@ -159,6 +160,41 @@ const AddHabitScreen = () => {
     });
   };
 
+  const handleAddTime = () => {
+    if (!tempTime.match(/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/)) {
+      Alert.alert('تنبيه', 'يرجى إدخال وقت صحيح بتنسيق HH:MM');
+      return;
+    }
+
+    if (!reminderTimes.includes(tempTime)) {
+      setReminderTimes([...reminderTimes, tempTime].sort());
+    }
+    setTempTime('');
+  };
+
+  const handleEditTime = (index: number, newTime: string) => {
+    if (!newTime.match(/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/)) {
+      Alert.alert('تنبيه', 'يرجى إدخال وقت صحيح بتنسيق HH:MM');
+      return;
+    }
+
+    const updatedTimes = [...reminderTimes];
+    updatedTimes[index] = newTime;
+    setReminderTimes(updatedTimes.sort());
+  };
+
+  const formatTimeInput = (text: string) => {
+    // تنسيق النص أثناء الكتابة
+    let formatted = text.replace(/[^0-9:]/g, '');
+    if (formatted.length === 2 && !formatted.includes(':') && !tempTime.includes(':')) {
+      formatted += ':';
+    }
+    if (formatted.length > 5) {
+      formatted = formatted.slice(0, 5);
+    }
+    return formatted;
+  };
+
   const renderFrequencySelector = () => {
     return (
       <View style={styles.frequencyContainer}>
@@ -194,34 +230,54 @@ const AddHabitScreen = () => {
       <View style={styles.reminderTimesContainer}>
         <View style={styles.reminderTimesHeader}>
           <Text style={styles.reminderTimesTitle}>أوقات التذكير</Text>
+        </View>
+
+        <View style={styles.timeInputContainer}>
+          <TextInput
+            style={[styles.timeInput, { direction: 'ltr' }]}
+            value={tempTime}
+            onChangeText={(text) => setTempTime(formatTimeInput(text))}
+            placeholder="09:30"
+            placeholderTextColor={COLORS.textLight}
+            keyboardType="numbers-and-punctuation"
+            maxLength={5}
+            textAlign="center"
+          />
           <TouchableOpacity 
-            style={styles.addTimeButton}
-            onPress={() => showTimePickerModal()}
+            style={[
+              styles.addTimeButton,
+              !tempTime.match(/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/) && styles.addTimeButtonDisabled
+            ]}
+            onPress={handleAddTime}
+            disabled={!tempTime.match(/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/)}
           >
-            <Text style={styles.addTimeButtonText}>+ إضافة وقت</Text>
+            <Text style={styles.addTimeButtonText}>إضافة</Text>
           </TouchableOpacity>
         </View>
+
+        <Text style={styles.timeInputHint}>
+          أدخل الوقت بتنسيق 24 ساعة. مثال: 13:30 للساعة 1:30 مساءً
+        </Text>
 
         {reminderTimes.length > 0 ? (
           <FlatList
             data={reminderTimes}
             renderItem={({ item, index }) => (
               <View style={styles.timeItem}>
-                <Text style={styles.timeText}>{formatTimeForDisplay(item)}</Text>
-                <View style={styles.timeActions}>
-                  <TouchableOpacity 
-                    style={styles.editTimeButton}
-                    onPress={() => showTimePickerModal(index)}
-                  >
-                    <Text style={styles.editTimeButtonText}>تعديل</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity 
-                    style={styles.removeTimeButton}
-                    onPress={() => removeReminderTime(index)}
-                  >
-                    <Text style={styles.removeTimeButtonText}>حذف</Text>
-                  </TouchableOpacity>
-                </View>
+                <TextInput
+                  style={[styles.timeItemInput, { direction: 'ltr' }]}
+                  value={item}
+                  onChangeText={(text) => handleEditTime(index, formatTimeInput(text))}
+                  keyboardType="numbers-and-punctuation"
+                  maxLength={5}
+                  textAlign="center"
+                />
+                <TouchableOpacity 
+                  style={styles.removeTimeButton}
+                  onPress={() => removeReminderTime(index)}
+                >
+                  <Text style={styles.removeTimeButtonText}>حذف</Text>
+                </TouchableOpacity>
               </View>
             )}
             keyExtractor={(item, index) => `time-${index}`}
@@ -539,16 +595,53 @@ const styles = StyleSheet.create({
     color: COLORS.textDark,
     includeFontPadding: false,
   },
+  timeInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: SPACING.sm,
+  },
+  timeInput: {
+    flex: 1,
+    height: 48,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 12,
+    paddingHorizontal: SPACING.md,
+    fontSize: 16,
+    backgroundColor: COLORS.white,
+    marginRight: SPACING.sm,
+  },
+  timeInputHint: {
+    fontSize: 12,
+    color: COLORS.textMedium,
+    textAlign: 'center',
+    marginBottom: SPACING.md,
+    fontStyle: 'italic',
+  },
+  timeItemInput: {
+    flex: 1,
+    height: 40,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 8,
+    paddingHorizontal: SPACING.sm,
+    fontSize: 16,
+    backgroundColor: COLORS.white,
+    marginRight: SPACING.sm,
+  },
   addTimeButton: {
-    backgroundColor: COLORS.primaryLight,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
+    backgroundColor: COLORS.primary,
+    padding: 12,
     borderRadius: 8,
   },
   addTimeButtonText: {
     color: COLORS.white,
     fontWeight: '600',
     fontSize: 14,
+  },
+  addTimeButtonDisabled: {
+    backgroundColor: COLORS.grayLight,
+    opacity: 0.5,
   },
   reminderTimesList: {
     backgroundColor: COLORS.background,
@@ -563,27 +656,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.sm,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
-  },
-  timeText: {
-    fontSize: 16,
-    color: COLORS.textDark,
-    fontWeight: '500',
-    includeFontPadding: false,
-  },
-  timeActions: {
-    flexDirection: 'row',
-  },
-  editTimeButton: {
-    backgroundColor: COLORS.info,
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    borderRadius: 6,
-    marginRight: 8,
-  },
-  editTimeButtonText: {
-    color: COLORS.white,
-    fontSize: 12,
-    fontWeight: '600',
   },
   removeTimeButton: {
     backgroundColor: COLORS.error,

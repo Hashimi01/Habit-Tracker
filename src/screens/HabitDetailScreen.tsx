@@ -14,23 +14,25 @@ import {
   I18nManager,
   StatusBar,
   Modal,
-  Platform
+  Platform,
+  Linking,
+  Keyboard
 } from 'react-native';
 import { RouteProp, useRoute, useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { RootStackParamList, Habit, Achievement } from '../types';
+import { RootStackParamList, Habit, Achievement, QuantitativeHabit } from '../types';
 import { updateHabit, getHabits } from '../utils/habitStorage';
 import { COLORS, SPACING } from '../theme';
 import uuid from 'react-native-uuid';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 
-// إعداد معالج الإشعارات
+// تعديل معالج الإشعارات
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowAlert: true,
     shouldPlaySound: true,
-    shouldSetBadge: false,
+    shouldSetBadge: true,
     shouldShowBanner: true,
     shouldShowList: true,
   }),
@@ -148,16 +150,71 @@ const HabitDetailScreen = () => {
     });
 
     // مستمع للتفاعل مع الإشعارات
-    responseListener.current = Notifications.addNotificationResponseReceivedListener(response => {
+    responseListener.current = Notifications.addNotificationResponseReceivedListener(async response => {
       console.log('تم التفاعل مع الإشعار:', response);
       
-      // إذا كان الإشعار من سلسلة الإشعارات السريعة، إلغاء جميع الإشعارات المتبقية
       const data = response.notification.request.content.data;
-      if (data && data.isRapidSequence && data.timeKey) {
+      if (data && data.timeKey && data.habitId) {
+        // تحقق من وجود سجل لليوم الحالي
+        const today = new Date().toISOString().split('T')[0];
+        const currentHabit = await getHabits().then(habits => 
+          habits.find(h => h.id === data.habitId)
+        );
+
+        if (currentHabit) {
+          const hasLogForToday = currentHabit.logs.some(log => 
+            log.date.split('T')[0] === today
+          );
+
+          // إذا لم يكن هناك سجل لليوم الحالي، قم بتسجيل تقدم صفري أو عدم التزام
+          if (!hasLogForToday) {
+            if (currentHabit.type === 'quantitative') {
+              // تسجيل تقدم صفري للعادات الكمية
+              const newLog = {
+                id: uuid.v4() as string,
+                date: new Date().toISOString(),
+                value: 0,
+              };
+
+              const updatedHabit = {
+                ...currentHabit,
+                logs: [...currentHabit.logs, newLog],
+              };
+
+              await updateHabit(updatedHabit);
+              console.log('تم تسجيل تقدم صفري تلقائياً');
+            } else if (currentHabit.type === 'commitment') {
+              // تسجيل عدم التزام للعادات الالتزامية
+              const newLog = {
+                id: uuid.v4() as string,
+                date: new Date().toISOString(),
+                committed: false,
+              };
+
+              // تحديث قيم الاستمرارية
+              const totalLogs = currentHabit.logs.length + 1;
+              const committedLogs = currentHabit.logs.filter(log => log.committed).length;
+              const commitmentPercentage = (committedLogs / totalLogs) * 100;
+
+              const updatedHabit = {
+                ...currentHabit,
+                logs: [...currentHabit.logs, newLog],
+                currentStreak: 0,
+                longestStreak: currentHabit.longestStreak || 0,
+                lastCheckIn: new Date().toISOString(),
+                commitmentPercentage: commitmentPercentage,
+              };
+
+              await updateHabit(updatedHabit);
+              console.log('تم تسجيل عدم التزام تلقائياً');
+            }
+          }
+        }
+
         // إلغاء سلسلة الإشعارات عند النقر على أي إشعار منها
         cancelAlarmSequence(data.timeKey as string);
         
-        // إلغاء جميع الإشعارات الظاهرة حاليًا
+        // إلغاء جميع الإشعارات الظاهرة حالياً
         Notifications.dismissAllNotificationsAsync().catch(err => 
           console.error('فشل إلغاء جميع الإشعارات الظاهرة:', err)
         );
@@ -165,7 +222,7 @@ const HabitDetailScreen = () => {
         // عرض رسالة توضيحية
         Alert.alert(
           'تم إيقاف التنبيهات',
-          `تم إيقاف سلسلة التنبيهات المتبقية بنجاح.`
+          `تم إيقاف سلسلة التنبيهات المتبقية وتسجيل ${currentHabit?.type === 'quantitative' ? 'تقدم صفري' : 'عدم التزام'} تلقائياً.`
         );
       }
     });
@@ -198,13 +255,13 @@ const HabitDetailScreen = () => {
         importance: Notifications.AndroidImportance.MAX,
         vibrationPattern: [0, 250, 250, 250],
         lightColor: '#FF231F7C',
-        sound: 'default', // تأكد من وجود قناة بصوت
+        sound: 'default',
       });
-    }
-
-    if (Device.isDevice) {
+    } else if (Platform.OS === 'ios') {
+      // طلب الأذونات الخاصة بـ iOS
       const { status: existingStatus } = await Notifications.getPermissionsAsync();
       let finalStatus = existingStatus;
+      
       if (existingStatus !== 'granted') {
         const { status } = await Notifications.requestPermissionsAsync({
           ios: {
@@ -215,151 +272,96 @@ const HabitDetailScreen = () => {
         });
         finalStatus = status;
       }
+
       if (finalStatus !== 'granted') {
-        Alert.alert('تنبيه', 'فشل الحصول على إذن الإشعارات!');
+        Alert.alert(
+          'تنبيه',
+          'يجب السماح بالإشعارات من إعدادات التطبيق لتلقي التنبيهات',
+          [
+            {
+              text: 'فتح الإعدادات',
+              onPress: () => Linking.openSettings(),
+            },
+            {
+              text: 'إلغاء',
+              style: 'cancel',
+            },
+          ]
+        );
         return;
       }
     } else {
       Alert.alert('تنبيه', 'يجب استخدام جهاز حقيقي لاختبار الإشعارات');
+      return;
     }
     
     return (await Notifications.getExpoPushTokenAsync()).data;
   }
 
-  // جدولة سلسلة من الإشعارات السريعة لمحاكاة منبه مستمر
+  // تعديل معالج الإشعارات
   const scheduleAlarmSequence = async (time: string) => {
     if (!habit) return;
-    
-    try {
-      // تحليل الوقت (ساعة:دقيقة)
-      const [hoursStr, minutesStr] = time.split(':');
-      const hours = parseInt(hoursStr, 10);
-      const minutes = parseInt(minutesStr, 10);
-      
-      if (isNaN(hours) || isNaN(minutes)) {
-        Alert.alert('خطأ', 'تنسيق الوقت غير صالح. يرجى استخدام تنسيق HH:MM');
-        return;
-      }
-      
-      // إلغاء أي تنبيهات سابقة بنفس وقت التذكير
-      if (scheduledNotifications[time]) {
-        await cancelAlarmSequence(time);
-      }
-      
-      // إعداد قناة الإشعارات لأندرويد
-      if (Platform.OS === 'android') {
-        await Notifications.setNotificationChannelAsync('rapid-fire', { 
-          name: 'Habit Reminders',
-          importance: Notifications.AndroidImportance.MAX,
-          vibrationPattern: [0, 250],
-          sound: 'default',
-          bypassDnd: true,
-        });
-      }
 
-      // تحديد وقت التنبيه
-      const now = new Date();
-      const targetDate = new Date();
-      targetDate.setHours(hours, minutes, 0, 0);
-      
-      // إذا كان الوقت في الماضي، جدوله لليوم التالي
-      if (targetDate.getTime() <= now.getTime()) {
-        targetDate.setDate(targetDate.getDate() + 1);
-      }
-      
-      // حساب المدة حتى وقت التنبيه (بالمللي ثانية)
-      const timeUntilAlarm = targetDate.getTime() - now.getTime();
-      
-      console.log(`جدولة سلسلة من الإشعارات للظهور في ${targetDate.toLocaleString()}`);
-      console.log(`التنبيه سيبدأ بعد ${Math.floor(timeUntilAlarm / (1000 * 60))} دقيقة و ${Math.floor((timeUntilAlarm / 1000) % 60)} ثانية`);
-      
-      // عدد الإشعارات والفاصل الزمني
-      const numberOfNotifications = 50; // تحديد عدد الإشعارات إلى 50
-      const intervalSeconds = 1.5; // زيادة الفاصل الزمني إلى 1.5 ثانية
-      const autoDismissSeconds = 3; // كل إشعار سيختفي تلقائيًا بعد 3 ثوان
-      
-      // مصفوفة لتخزين معرفات الإشعارات
-      const notificationIdentifiers: string[] = [];
-      
-      // حفظ مرجع للمؤقت الرئيسي لإمكانية إلغائه لاحقًا
-      const mainTimerId = setTimeoutWithRef(async () => {
-        console.log(`حان وقت التنبيه! بدء سلسلة الإشعارات...`);
-        
-        // التأكد من إلغاء أي إشعارات قديمة قبل البدء
-        await Notifications.dismissAllNotificationsAsync().catch(err => 
-          console.error('فشل إلغاء الإشعارات القديمة:', err)
-        );
-        
-        // عرض النافذة المنبثقة لإيقاف التنبيه
-        setActiveAlarmTimeKey(time);
-        setShowStopAlarmModal(true);
-        
-        // عرض الإشعارات بشكل متتالي باستخدام مؤقتات داخلية
-      for (let i = 0; i < numberOfNotifications; i++) {
-          // استخدام دالة مساعدة لإنشاء إغلاق مناسب (closure) للمتغير i
-          const showNotification = async (index: number) => {
+    // Show confirmation dialog first
+    Alert.alert(
+      'تأكيد إضافة التنبيه',
+      `هل تريد إضافة تنبيه في الساعة ${time}؟`,
+      [
+        {
+          text: 'إلغاء',
+          style: 'cancel'
+        },
+        {
+          text: 'تأكيد',
+          onPress: async () => {
             try {
-              const notificationTime = new Date(targetDate.getTime() + (index * intervalSeconds * 1000));
-              console.log(`عرض الإشعار ${index + 1}/${numberOfNotifications} في: ${notificationTime.toLocaleTimeString()}`);
-        
-              // إنشاء معرف فريد وثابت لكل إشعار
-              const notificationId = `habit-${habit.id}-time-${time}-index-${index}`;
-              
-              // إلغاء الإشعار من نفس المعرف أولا إذا كان موجودا
-              try {
-                await Notifications.cancelScheduledNotificationAsync(notificationId);
-              } catch (err) {
-                // تجاهل أي خطأ هنا
+              // تحقق من أذونات الإشعارات قبل الجدولة
+              const { status } = await Notifications.getPermissionsAsync();
+              if (status !== 'granted') {
+                Alert.alert(
+                  'تنبيه',
+                  'يجب السماح بالإشعارات لتلقي التنبيهات',
+                  [
+                    {
+                      text: 'فتح الإعدادات',
+                      onPress: () => Linking.openSettings(),
+                    },
+                    {
+                      text: 'إلغاء',
+                      style: 'cancel',
+                    },
+                  ]
+                );
+                return;
               }
-              
-              // إظهار الإشعار 
-          const identifier = await Notifications.scheduleNotificationAsync({
-            content: {
-                  title: `تذكير: ${habit.name} (${index + 1}/${numberOfNotifications}) ⚡`,
-              body: `حان وقت ${habit.type === 'quantitative' ? `${habit.goal} ${habit.unit}` : 'الالتزام'} - انقر هنا لإيقاف التنبيهات.`,
-              sound: 'default',
-              priority: 'max',
-              data: { 
-                habitId: habit.id,
-                timeKey: time,
-                isRapidSequence: true,
-                    notificationIndex: index,
-                    expireAt: new Date(Date.now() + (autoDismissSeconds * 1000)).getTime()
-              },
-            },
-                identifier: notificationId, // استخدام المعرف الثابت
-                trigger: null, // عرض فوري
-          });
-          
-              console.log(`تم عرض الإشعار ${index + 1} بمعرف: ${identifier}`);
-          notificationIdentifiers.push(identifier);
-              
-              // إعداد مؤقت لإلغاء الإشعار تلقائيًا بعد فترة محددة
-              setTimeoutWithRef(async () => {
-                try {
-                  // محاولة إلغاء الإشعار بمعرف ثابت
-                  await Notifications.cancelScheduledNotificationAsync(notificationId);
-                  console.log(`تم إلغاء الإشعار ${index + 1} تلقائيًا بعد ${autoDismissSeconds} ثوان`);
-                  
-                  // محاولة إلغاء بالمعرف الذي أرجعه النظام إذا كان مختلفًا
-                  if (identifier !== notificationId) {
-                    await Notifications.cancelScheduledNotificationAsync(identifier);
-      }
-      
-                  // للتأكد من إزالة الإشعار، نقوم أيضًا بمحاولة إزالة جميع الإشعارات الظاهرة حاليًا
-                  if (index % 5 === 0) { // كل 5 إشعارات لتقليل الضغط على النظام
-                    await Notifications.dismissAllNotificationsAsync();
-                  }
-                } catch (err) {
-                  console.error(`فشل إلغاء الإشعار التلقائي ${identifier}:`, err);
-                  // محاولة إلغاء جميع الإشعارات في حالة الفشل
-                  try {
-                    await Notifications.dismissAllNotificationsAsync();
-                  } catch (dismissErr) {
-                    console.error('فشل إلغاء جميع الإشعارات:', dismissErr);
-                  }
-                }
-              }, autoDismissSeconds * 1000);
+
+              // إعداد قناة الإشعارات لأندرويد
+              if (Platform.OS === 'android') {
+                await Notifications.setNotificationChannelAsync('alarms', {
+                  name: 'Habit Alarms',
+                  importance: Notifications.AndroidImportance.MAX,
+                  vibrationPattern: [0, 250, 250, 250],
+                  lightColor: '#FF231F7C',
+                  sound: 'default',
+                });
+              }
+
+              // إظهار إشعار فوري للتأكد من عمل النظام
+              const identifier = await Notifications.scheduleNotificationAsync({
+                content: {
+                  title: `تذكير: ${habit.name}`,
+                  body: habit.type === 'quantitative' 
+                    ? `حان وقت ${(habit as QuantitativeHabit).goal} ${(habit as QuantitativeHabit).unit}`
+                    : 'حان وقت الالتزام',
+                  sound: 'default',
+                  priority: 'max',
+                  data: { 
+                    habitId: habit.id,
+                    timeKey: time,
+                  },
+                },
+                trigger: null, // إظهار فوري
+              });
               
               // تحديث قائمة الإشعارات في الحالة
               setScheduledNotifications(prev => {
@@ -367,208 +369,73 @@ const HabitDetailScreen = () => {
                 if (!updated[time]) {
                   updated[time] = [];
                 }
-                // أضف المعرف الجديد وتأكد من عدم تكرار المعرفات
                 if (!updated[time].includes(identifier)) {
                   updated[time].push(identifier);
                 }
                 return updated;
               });
-            } catch (err) {
-              console.error(`خطأ في عرض الإشعار ${index + 1}:`, err);
+
+              // تحديث العادة مع وقت التذكير الجديد
+              const updatedHabit = {
+                ...habit,
+                reminderTimes: [...(habit.reminderTimes || []), time].sort()
+              };
+              await updateHabit(updatedHabit);
+              setHabit(updatedHabit);
+
+              Alert.alert(
+                'تم إضافة التنبيه',
+                `تم إضافة تنبيه للساعة ${time} بنجاح. سيتم تسجيل ${habit.type === 'quantitative' ? 'تقدم صفري' : 'عدم التزام'} تلقائياً إذا لم يتم تسجيل التقدم.`
+              );
+            } catch (error) {
+              console.error('Error scheduling notification:', error);
+              Alert.alert(
+                'خطأ',
+                'حدث خطأ أثناء إعداد التنبيه. الرجاء المحاولة مرة أخرى.'
+              );
             }
-          };
-          
-          // جدولة الإشعارات مع فاصل زمني
-          setTimeoutWithRef(() => showNotification(i), i * intervalSeconds * 1000);
-        }
-        
-        // إلغاء جميع الإشعارات بعد انتهاء السلسلة تلقائيًا
-        const totalDuration = numberOfNotifications * intervalSeconds * 1000 + 5000; // إضافة 5 ثوان كهامش أمان
-        setTimeoutWithRef(async () => {
-          try {
-            // محاولة إلغاء جميع الإشعارات المجدولة بشكل فردي
-            for (const id of notificationIdentifiers) {
-              await Notifications.cancelScheduledNotificationAsync(id).catch(() => {});
-            }
-            
-            // ثم إلغاء جميع الإشعارات الظاهرة
-            await Notifications.dismissAllNotificationsAsync();
-            console.log('تم إلغاء جميع الإشعارات تلقائيًا بعد انتهاء السلسلة');
-            
-            // إخفاء نافذة إيقاف التنبيه تلقائيًا
-            if (activeAlarmTimeKey === time) {
-              setShowStopAlarmModal(false);
-              setActiveAlarmTimeKey(null);
-            }
-          } catch (err) {
-            console.error('فشل إلغاء الإشعارات تلقائيًا بعد السلسلة:', err);
           }
-        }, totalDuration);
-        
-        // إعداد مؤقت للتأكد من إلغاء جميع الإشعارات كل 5 ثوان
-        let cleanupCounter = 0;
-        const maxCleanups = 10; // عدد مرات التنظيف
-        
-        const cleanupInterval = setInterval(async () => {
-          try {
-            await Notifications.dismissAllNotificationsAsync();
-            console.log(`تنظيف الإشعارات رقم ${cleanupCounter + 1}/${maxCleanups}`);
-            
-            cleanupCounter++;
-            if (cleanupCounter >= maxCleanups) {
-              clearInterval(cleanupInterval);
-            }
-          } catch (err) {
-            console.error('فشل تنظيف الإشعارات:', err);
-          }
-        }, 5000); // كل 5 ثوان
-        
-        // حفظ معرف الفاصل الزمني لإمكانية إلغائه لاحقًا
-        timeoutRefs.current.push(cleanupInterval as unknown as TimeoutID);
-      }, timeUntilAlarm);
-      
-      // تحديث العادة مع وقت التذكير الجديد
-      if (habit) {
-        const reminderTimes = [...(habit.reminderTimes || [])];
-        if (!reminderTimes.includes(time)) {
-          reminderTimes.push(time);
         }
-        
-        const updatedHabit = {
-          ...habit,
-          reminderTimes,
-        };
-        
-        await updateHabit(updatedHabit);
-        setHabit(updatedHabit);
-        
-        // تأكيد للمستخدم
-        const formattedTime = targetDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        const isToday = targetDate.getDate() === now.getDate();
-        const timeUntilNotification = Math.floor((targetDate.getTime() - now.getTime()) / (1000 * 60)); // بالدقائق
-        
-        let timeMessage = '';
-        if (isToday) {
-          if (timeUntilNotification < 60) {
-            timeMessage = `بعد ${timeUntilNotification} دقيقة`;
-          } else {
-            timeMessage = `بعد ${Math.floor(timeUntilNotification/60)} ساعة و ${timeUntilNotification % 60} دقيقة`;
-          }
-        } else {
-          timeMessage = `غدًا الساعة ${formattedTime}`;
-        }
-        
-        Alert.alert(
-          'تمت جدولة التذكير',
-          `تم جدولة ${numberOfNotifications} تنبيهات متتالية ${timeMessage} مع فاصل زمني قدره ${intervalSeconds} ثانية بين كل تنبيه. كل إشعار سيختفي تلقائيًا بعد ${autoDismissSeconds} ثوان.`,
-          [{ text: 'حسناً' }]
-        );
-      }
-    } catch (error) {
-      console.error('خطأ في جدولة التنبيهات:', error);
-      Alert.alert('خطأ', 'حدث خطأ أثناء جدولة التنبيهات. يرجى المحاولة مرة أخرى.');
-    }
+      ]
+    );
   };
   
   // إلغاء سلسلة الإشعارات السريعة
-  const cancelAlarmSequence = async (time: string) => {
-    if (!scheduledNotifications[time] || scheduledNotifications[time].length === 0) {
-      console.log(`لا توجد إشعارات مخزنة للوقت ${time} للإلغاء`);
-      return;
-    }
-    
+  const cancelAlarmSequence = async (timeKey: string) => {
     try {
-      // مسح جميع المؤقتات أولاً
-      clearAllTimeouts();
+      // إلغاء جميع الإشعارات المجدولة لهذا الوقت
+      if (scheduledNotifications[timeKey]) {
+        for (const identifier of scheduledNotifications[timeKey]) {
+          await Notifications.cancelScheduledNotificationAsync(identifier).catch(() => {});
+        }
+        
+        // تحديث حالة الإشعارات المجدولة
+        setScheduledNotifications(prev => {
+          const updated = { ...prev };
+          delete updated[timeKey];
+          return updated;
+        });
+      }
       
-      // إغلاق النافذة المنبثقة إذا كانت مفتوحة
-      if (activeAlarmTimeKey === time) {
+      // إخفاء نافذة إيقاف التنبيه إذا كانت مفتوحة
+      if (activeAlarmTimeKey === timeKey) {
         setShowStopAlarmModal(false);
         setActiveAlarmTimeKey(null);
       }
       
-      // ثم إلغاء أي إشعارات قد تكون ظهرت بالفعل
-      const identifiers = scheduledNotifications[time];
-      if (identifiers && identifiers.length > 0) {
-        console.log(`إلغاء ${identifiers.length} إشعارات لوقت ${time}...`);
-        
-        // تعيين عدد محاولات إلغاء الإشعارات
-        const maxRetries = 3;
-        let attemptsCount = 0;
-        let allCancelled = false;
-        
-        // محاولة إلغاء الإشعارات عدة مرات للتأكد من توقفها
-        while (!allCancelled && attemptsCount < maxRetries) {
-          attemptsCount++;
-          console.log(`محاولة إلغاء الإشعارات رقم ${attemptsCount}...`);
-        
-        // إلغاء كل إشعار مجدول على حدة
-          let failedCancellations = 0;
-        for (const id of identifiers) {
-          try {
-            await Notifications.cancelScheduledNotificationAsync(id);
-            console.log(`تم إلغاء الإشعار بمعرف: ${id}`);
-          } catch (innerError) {
-            console.error(`فشل إلغاء الإشعار ${id}:`, innerError);
-              failedCancellations++;
-          }
-        }
-        
-          // إلغاء الإشعارات الظاهرة
-        try {
-            await Notifications.dismissAllNotificationsAsync();
-            console.log('تم إلغاء جميع الإشعارات الظاهرة');
-        } catch (error) {
-            console.error('فشل إلغاء الإشعارات الظاهرة:', error);
-            failedCancellations++;
-          }
-          
-          // التحقق مما إذا كانت كل الإشعارات قد تم إلغاؤها بنجاح
-          if (failedCancellations === 0) {
-            allCancelled = true;
-            console.log('تم إلغاء جميع الإشعارات بنجاح');
-          } else {
-            console.log(`فشل إلغاء ${failedCancellations} إشعارات، محاولة مرة أخرى...`);
-            // انتظار قصير قبل المحاولة مرة أخرى
-            await new Promise(resolve => setTimeout(resolve, 500));
-          }
-        }
-        
-        // تعيين مؤقت للتحقق المستمر من عدم وجود إشعارات نشطة بعد عملية الإلغاء
-        const verificationTimeout = setTimeoutWithRef(async () => {
-          try {
-            // التحقق من عدم وجود إشعارات مجدولة متبقية
-            const scheduledNotifs = await Notifications.getAllScheduledNotificationsAsync();
-            const remainingNotifs = scheduledNotifs.filter(notif => 
-              notif.content.data && 
-              notif.content.data.timeKey === time
-            );
-            
-            if (remainingNotifs.length > 0) {
-              console.log(`لا تزال هناك ${remainingNotifs.length} إشعارات متبقية، محاولة إلغائها...`);
-              for (const notif of remainingNotifs) {
-                await Notifications.cancelScheduledNotificationAsync(notif.identifier);
-              }
-              // إلغاء جميع الإشعارات الظاهرة مرة أخرى للتأكد
-              await Notifications.dismissAllNotificationsAsync();
-            }
-          } catch (error) {
-            console.error('خطأ في التحقق من الإشعارات المتبقية:', error);
-        }
-        }, 2000); // التحقق بعد ثانيتين
-        
-        console.log('تم إلغاء إشعارات السلسلة بنجاح');
+      // إذا كان هذا الوقت موجود في العادة، قم بإزالته
+      if (habit && habit.reminderTimes) {
+        const updatedHabit = {
+          ...habit,
+          reminderTimes: habit.reminderTimes.filter(t => t !== timeKey)
+        };
+        await updateHabit(updatedHabit);
+        setHabit(updatedHabit);
       }
       
-      // حذف وقت التذكير من قائمة الأوقات المحفوظة
-      const updatedScheduledNotifications = { ...scheduledNotifications };
-      delete updatedScheduledNotifications[time];
-      setScheduledNotifications(updatedScheduledNotifications);
-      
-      console.log(`تم إلغاء التذكير في الساعة ${time}`);
+      console.log(`تم إلغاء سلسلة التنبيهات للوقت ${timeKey}`);
     } catch (error) {
-      console.error('خطأ في إلغاء الإشعارات:', error);
-      console.log('فشلت محاولة إلغاء الإشعارات المحددة.');
+      console.error('خطأ في إلغاء سلسلة التنبيهات:', error);
     }
   };
   
@@ -1328,32 +1195,47 @@ const HabitDetailScreen = () => {
             <View style={styles.achievementInputContainer}>
               <Text style={styles.inputLabel}>أدخل وقت التذكير (HH:MM):</Text>
               <TextInput
-                style={styles.fullWidthInput}
-                placeholder="مثال: 09:30"
+                style={[styles.fullWidthInput, { direction: 'ltr' }]}
+                placeholder="09:30"
                 placeholderTextColor={COLORS.textLight}
                 textAlign="center"
                 value={reminderTime}
-                onChangeText={setReminderTime}
+                onChangeText={(text) => {
+                  // تنسيق النص أثناء الكتابة
+                  let formatted = text.replace(/[^0-9:]/g, '');
+                  if (formatted.length === 2 && !formatted.includes(':') && !reminderTime.includes(':')) {
+                    formatted += ':';
+                  }
+                  if (formatted.length > 5) {
+                    formatted = formatted.slice(0, 5);
+                  }
+                  setReminderTime(formatted);
+                }}
                 keyboardType="numbers-and-punctuation"
+                maxLength={5}
               />
               <Text style={styles.reminderNote}>
-                سيتم جدولة سلسلة من 50 إشعارًا متتاليًا بفاصل نصف ثانية بين كل منها عند حلول الوقت المحدد. ستظهر شاشة تمكنك من إيقاف التنبيهات.
-              </Text>
-              <Text style={styles.reminderWarning}>
-                ملاحظة: هذه الطريقة تجريبية وقد تتأخر الإشعارات أو تتوقف بسبب قيود نظام التشغيل.
+                أدخل الوقت بتنسيق 24 ساعة. مثال: 13:30 للساعة 1:30 مساءً
               </Text>
             </View>
             
             <View style={styles.modalButtons}>
               <TouchableOpacity 
                 style={styles.modalCancelButton}
-                onPress={() => setShowReminderModal(false)}
+                onPress={() => {
+                  setShowReminderModal(false);
+                  setReminderTime('');
+                }}
               >
                 <Text style={styles.modalCancelButtonText}>إلغاء</Text>
               </TouchableOpacity>
               <TouchableOpacity 
-                style={styles.modalConfirmButton}
+                style={[
+                  styles.modalConfirmButton,
+                  !reminderTime.match(/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/) && styles.modalConfirmButtonDisabled
+                ]}
                 onPress={addReminderTime}
+                disabled={!reminderTime.match(/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/)}
               >
                 <Text style={styles.modalConfirmButtonText}>إضافة</Text>
               </TouchableOpacity>
@@ -1861,6 +1743,10 @@ const styles = StyleSheet.create({
     minWidth: 80,
     alignItems: 'center',
     height: 44,
+  },
+  modalConfirmButtonDisabled: {
+    backgroundColor: COLORS.grayLight,
+    opacity: 0.5,
   },
   modalConfirmButtonText: {
     color: COLORS.white,
